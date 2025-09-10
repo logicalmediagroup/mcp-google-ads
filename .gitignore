@@ -54,3 +54,6 @@ site/
 google_ads_token.json
 
 uv.lock
+
+.cursor/
+.cursor/*
