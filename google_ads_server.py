@@ -1472,5 +1472,93 @@ async def list_resources(
     return await run_gaql(customer_id, query)
 
 if __name__ == "__main__":
-    # Start the MCP server on stdio transport
-    mcp.run(transport="stdio")
+    import sys
+    import os
+    
+    # Check if we're running in Cloud Run (has PORT environment variable)
+    port = os.environ.get("PORT")
+    
+    if port:
+        # Running in Cloud Run - start FastAPI HTTP server
+        print(f"Starting MCP server on HTTP port {port}")
+        import uvicorn
+        from fastapi import FastAPI
+        from fastapi.responses import JSONResponse
+        
+        # Create FastAPI app for HTTP endpoints
+        app = FastAPI(title="Google Ads MCP Server", version="1.0.0")
+        
+        # Add health check endpoint
+        @app.get("/health")
+        async def health_check():
+            return {"status": "healthy", "service": "google-ads-mcp"}
+        
+        # Add root endpoint
+        @app.get("/")
+        async def root():
+            return {"message": "Google Ads MCP Server", "status": "running"}
+        
+        # Google Ads API endpoints
+        @app.post("/mcp/list_accounts")
+        async def api_list_accounts():
+            try:
+                result = await list_accounts()
+                return {"success": True, "data": result}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        @app.post("/mcp/get_campaign_performance")
+        async def api_get_campaign_performance(request_data: dict):
+            try:
+                customer_id = request_data.get("customer_id")
+                days = request_data.get("days", 30)
+                result = await get_campaign_performance(customer_id, days)
+                return {"success": True, "data": result}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        @app.post("/mcp/get_ad_performance")
+        async def api_get_ad_performance(request_data: dict):
+            try:
+                customer_id = request_data.get("customer_id")
+                days = request_data.get("days", 30)
+                result = await get_ad_performance(customer_id, days)
+                return {"success": True, "data": result}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        @app.post("/mcp/get_ad_creatives")
+        async def api_get_ad_creatives(request_data: dict):
+            try:
+                customer_id = request_data.get("customer_id")
+                result = await get_ad_creatives(customer_id)
+                return {"success": True, "data": result}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        @app.post("/mcp/run_gaql")
+        async def api_run_gaql(request_data: dict):
+            try:
+                customer_id = request_data.get("customer_id")
+                query = request_data.get("query")
+                format_type = request_data.get("format", "table")
+                result = await run_gaql(customer_id, query, format_type)
+                return {"success": True, "data": result}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        @app.post("/mcp/get_account_currency")
+        async def api_get_account_currency(request_data: dict):
+            try:
+                customer_id = request_data.get("customer_id")
+                result = await get_account_currency(customer_id)
+                return {"success": True, "data": result}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        # Start the server
+        uvicorn.run(app, host="0.0.0.0", port=int(port))
+    else:
+        # Running locally - start stdio transport (for Cursor)
+        print("Starting MCP server on stdio transport")
+        mcp.run(transport="stdio")

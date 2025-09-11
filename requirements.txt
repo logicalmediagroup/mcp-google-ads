@@ -1,6 +1,10 @@
 # MCP requirements
 mcp>=0.0.11
 
+# Web server requirements (for Cloud Run)
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
 # Google API requirements
 google-auth>=2.25.2
 google-auth-oauthlib>=1.1.0
