@@ -57,5 +57,6 @@ uv.lock
 
 .cursor/
 .cursor/*
+!.cursor/*.example
 
 harry-714-key.json
