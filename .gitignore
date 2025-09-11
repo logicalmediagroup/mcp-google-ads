@@ -60,3 +60,6 @@ uv.lock
 !.cursor/*.example
 
 harry-714-key.json
+
+# Local deployment files with sensitive data
+cloudbuild.local.yaml
