@@ -1,0 +1,49 @@
+# Default gcloudignore patterns
+.gcloudignore
+.git
+.gitignore
+.dockerignore
+node_modules
+#!include:.gitignore
+
+# Explicitly include service account key file
+!harry-714-key.json
+
+# Exclude other JSON files except our service account key
+*.json
+!harry-714-key.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.cursor/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.env
+
+# Documentation (we don't need in build)
+*.md
+pulls/
+docs/

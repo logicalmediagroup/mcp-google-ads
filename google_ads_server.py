@@ -1498,7 +1498,117 @@ if __name__ == "__main__":
         async def root():
             return {"message": "Google Ads MCP Server", "status": "running"}
         
-        # Google Ads API endpoints
+        # Unified MCP endpoint - single entry point for all tools
+        @app.post("/mcp/")
+        async def unified_mcp_endpoint(request_data: dict):
+            """
+            Unified MCP endpoint that can call any tool based on the request.
+            Expected request format:
+            {
+                "tool": "tool_name",
+                "arguments": {
+                    "param1": "value1",
+                    "param2": "value2"
+                }
+            }
+            """
+            try:
+                tool_name = request_data.get("tool")
+                arguments = request_data.get("arguments", {})
+                
+                if not tool_name:
+                    return {"success": False, "error": "Missing 'tool' field in request"}
+                
+                # Route to the appropriate tool function
+                if tool_name == "list_accounts":
+                    result = await list_accounts()
+                    
+                elif tool_name == "execute_gaql_query":
+                    customer_id = arguments.get("customer_id")
+                    query = arguments.get("query")
+                    if not customer_id or not query:
+                        return {"success": False, "error": "Missing customer_id or query"}
+                    result = await execute_gaql_query(customer_id, query)
+                    
+                elif tool_name == "get_campaign_performance":
+                    customer_id = arguments.get("customer_id")
+                    days = arguments.get("days", 30)
+                    if not customer_id:
+                        return {"success": False, "error": "Missing customer_id"}
+                    result = await get_campaign_performance(customer_id, days)
+                    
+                elif tool_name == "get_ad_performance":
+                    customer_id = arguments.get("customer_id")
+                    days = arguments.get("days", 30)
+                    if not customer_id:
+                        return {"success": False, "error": "Missing customer_id"}
+                    result = await get_ad_performance(customer_id, days)
+                    
+                elif tool_name == "get_ad_creatives":
+                    customer_id = arguments.get("customer_id")
+                    if not customer_id:
+                        return {"success": False, "error": "Missing customer_id"}
+                    result = await get_ad_creatives(customer_id)
+                    
+                elif tool_name == "run_gaql":
+                    customer_id = arguments.get("customer_id")
+                    query = arguments.get("query")
+                    format_type = arguments.get("format", "table")
+                    if not customer_id or not query:
+                        return {"success": False, "error": "Missing customer_id or query"}
+                    result = await run_gaql(customer_id, query, format_type)
+                    
+                elif tool_name == "get_account_currency":
+                    customer_id = arguments.get("customer_id")
+                    if not customer_id:
+                        return {"success": False, "error": "Missing customer_id"}
+                    result = await get_account_currency(customer_id)
+                    
+                elif tool_name == "get_image_assets":
+                    customer_id = arguments.get("customer_id")
+                    limit = arguments.get("limit", 50)
+                    if not customer_id:
+                        return {"success": False, "error": "Missing customer_id"}
+                    result = await get_image_assets(customer_id, limit)
+                    
+                elif tool_name == "download_image_asset":
+                    customer_id = arguments.get("customer_id")
+                    asset_id = arguments.get("asset_id")
+                    output_dir = arguments.get("output_dir", "./ad_images")
+                    if not customer_id or not asset_id:
+                        return {"success": False, "error": "Missing customer_id or asset_id"}
+                    result = await download_image_asset(customer_id, asset_id, output_dir)
+                    
+                elif tool_name == "get_asset_usage":
+                    customer_id = arguments.get("customer_id")
+                    asset_id = arguments.get("asset_id")
+                    asset_type = arguments.get("asset_type", "IMAGE")
+                    if not customer_id:
+                        return {"success": False, "error": "Missing customer_id"}
+                    result = await get_asset_usage(customer_id, asset_id, asset_type)
+                    
+                elif tool_name == "analyze_image_assets":
+                    customer_id = arguments.get("customer_id")
+                    days = arguments.get("days", 30)
+                    if not customer_id:
+                        return {"success": False, "error": "Missing customer_id"}
+                    result = await analyze_image_assets(customer_id, days)
+                    
+                elif tool_name == "list_resources":
+                    customer_id = arguments.get("customer_id")
+                    if not customer_id:
+                        return {"success": False, "error": "Missing customer_id"}
+                    result = await list_resources(customer_id)
+                    
+                else:
+                    return {"success": False, "error": f"Unknown tool: {tool_name}"}
+                
+                return {"success": True, "data": result}
+                
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        
+        # Keep individual endpoints for backward compatibility
         @app.post("/mcp/list_accounts")
         async def api_list_accounts():
             try:

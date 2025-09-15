@@ -18,9 +18,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Debug: List files to verify they're there
+RUN ls -la /app/harry-714-key.json || echo "Key file not found during build"
+RUN ls -la /app/ | head -20
+
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
+
+# Debug: Verify files are accessible as appuser
+RUN ls -la /app/harry-714-key.json || echo "Key file not accessible as appuser"
 
 # Expose port (Cloud Run will set PORT env var)
 EXPOSE 8080
