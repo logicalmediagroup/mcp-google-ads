@@ -1262,18 +1262,14 @@ if __name__ == "__main__":
     import os
     
     # Check if we're running in a deployment environment
-    # Common environment variables that indicate deployment:
-    # - PORT (set by many cloud platforms like Google Cloud Run, Railway, etc.)
-    # - RAILWAY_ENVIRONMENT, RENDER, VERCEL, etc. (platform-specific)
-    # - MCP_HTTP_MODE (custom flag to force HTTP mode)
     port = os.environ.get("PORT")
     http_mode = os.environ.get("MCP_HTTP_MODE", "").lower() in ("true", "1", "yes")
     
     if port or http_mode:
-        # Running in deployment environment - use HTTP transport
+        # Running in deployment environment - use direct HTTP transport
         host = os.environ.get("HOST", "0.0.0.0")
         port_num = int(port) if port else 8000
-        print(f"Starting MCP server on HTTP transport at {host}:{port_num}")
+        print(f"Starting FastMCP server on HTTP transport at {host}:{port_num}")
         mcp.run(transport="http", host=host, port=port_num)
     else:
         # Running locally - use stdio transport (for Cursor/desktop clients)
