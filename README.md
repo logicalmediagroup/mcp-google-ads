@@ -116,7 +116,7 @@ This MCP server provides tools accessible through multiple interfaces:
 | `list_resources`                | `POST /mcp/list_resources`           | Lists valid GAQL resource types                             | `customer_id`                                |
 
 ### Health & Status Endpoints
-- `GET /health` - Health check endpoint
+- `GET /health` - Health check endpoint (returns service status and version)
 - `GET /` - Service information
 
 ### Using the Advanced Query Tools
@@ -673,18 +673,30 @@ This custom version includes several key technical improvements:
 ### Dual Transport Support
 The server automatically detects its environment and runs in the appropriate mode:
 - **Local Development**: stdio transport for MCP protocol (Claude/Cursor)
-- **Cloud Run**: HTTP server with FastAPI endpoints for web API access
+- **Cloud Deployment**: HTTP server with FastMCP endpoints for web API access
 
 ```python
 # Environment detection in google_ads_server.py
 port = os.environ.get("PORT")
-if port:
-    # Cloud Run mode - start FastAPI HTTP server
-    uvicorn.run(app, host="0.0.0.0", port=int(port))
+http_mode = os.environ.get("MCP_HTTP_MODE", "").lower() in ("true", "1", "yes")
+
+if port or http_mode:
+    # Deployment mode - start HTTP transport
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(port) if port else 8000
+    print(f"Starting MCP server on HTTP transport at {host}:{port}")
+    mcp.run(transport="http", host=host, port=port)
 else:
     # Local mode - start MCP stdio transport
+    print("Starting MCP server on stdio transport")
     mcp.run(transport="stdio")
 ```
+
+**Key Features:**
+- **Automatic Detection**: Detects Cloud Run (`PORT` env var) or manual HTTP mode (`MCP_HTTP_MODE=true`)
+- **Health Monitoring**: `/health` endpoint for load balancers and monitoring systems
+- **FastMCP Integration**: Uses FastMCP's built-in HTTP transport (no custom FastAPI needed)
+- **Production Ready**: Follows FastMCP deployment best practices
 
 ### Production Authentication
 - **Service Account Impersonation**: Uses `[SERVICE_ACCOUNT_EMAIL]` to impersonate authorized users
@@ -699,8 +711,9 @@ Optimized for Cloud Run deployment:
 
 ### Error Handling & Monitoring
 - **Comprehensive logging**: Structured logs for debugging and monitoring
-- **Health checks**: `/health` endpoint for service monitoring
+- **Health checks**: `/health` endpoint returns `{"status": "healthy", "service": "google-ads-mcp-server", "version": "1.0.0"}`
 - **Graceful failures**: Proper error responses with actionable messages
+- **Authentication separation**: Modular auth system in separate `auth.py` module
 
 ### API Response Format
 Consistent JSON response format for all HTTP endpoints:
@@ -797,6 +810,36 @@ Remember that most issues have been encountered by others before, and there's us
 ### Testing Your Setup
 
 The repository includes test files that let you verify your Google Ads API connection is working correctly before using it with Claude or Cursor.
+
+#### Testing HTTP Mode and Health Endpoint
+
+You can test the HTTP mode locally to ensure deployment will work:
+
+1. **Start in HTTP mode**:
+   ```bash
+   # Activate virtual environment
+   source .venv/bin/activate
+   
+   # Start server in HTTP mode
+   MCP_HTTP_MODE=true python google_ads_server.py
+   ```
+
+2. **Test the health endpoint**:
+   ```bash
+   # In another terminal
+   curl http://localhost:8000/health
+   
+   # Expected response:
+   # {"status":"healthy","service":"google-ads-mcp-server","version":"1.0.0"}
+   ```
+
+3. **Test MCP endpoints**:
+   ```bash
+   # Test list accounts (requires authentication)
+   curl -X POST http://localhost:8000/mcp/ \
+     -H "Content-Type: application/json" \
+     -d '{"tool": "list_accounts", "arguments": {}}'
+   ```
 
 #### Testing Basic Functionality
 

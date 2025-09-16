@@ -3,11 +3,11 @@ from pydantic import Field
 import requests
 import logging
 import json
-import os
 from pathlib import Path
 
-# MCP
-from mcp.server.fastmcp import FastMCP
+# FastMCP
+from fastmcp import FastMCP
+from starlette.responses import JSONResponse
 
 # Authentication module
 from auth import get_credentials, get_headers, format_customer_id, API_VERSION
@@ -26,6 +26,14 @@ mcp = FastMCP(
     ]
 )
 
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request):
+    """Health check endpoint for monitoring and load balancers."""
+    return JSONResponse({
+        "status": "healthy", 
+        "service": "google-ads-mcp-server",
+        "version": "1.0.0"
+    })
 
 @mcp.tool()
 async def list_accounts() -> str:
@@ -1251,202 +1259,23 @@ async def list_resources(
     return await run_gaql(customer_id, query)
 
 if __name__ == "__main__":
-    import sys
+    import os
     
-    # Check if we're running in Cloud Run (has PORT environment variable)
+    # Check if we're running in a deployment environment
+    # Common environment variables that indicate deployment:
+    # - PORT (set by many cloud platforms like Google Cloud Run, Railway, etc.)
+    # - RAILWAY_ENVIRONMENT, RENDER, VERCEL, etc. (platform-specific)
+    # - MCP_HTTP_MODE (custom flag to force HTTP mode)
     port = os.environ.get("PORT")
+    http_mode = os.environ.get("MCP_HTTP_MODE", "").lower() in ("true", "1", "yes")
     
-    if port:
-        # Running in Cloud Run - start FastAPI HTTP server
-        print(f"Starting MCP server on HTTP port {port}")
-        import uvicorn
-        from fastapi import FastAPI
-        from fastapi.responses import JSONResponse
-        
-        # Create FastAPI app for HTTP endpoints
-        app = FastAPI(title="Google Ads MCP Server", version="1.0.0")
-        
-        # Add health check endpoint
-        @app.get("/health")
-        async def health_check():
-            return {"status": "healthy", "service": "google-ads-mcp"}
-        
-        # Add root endpoint
-        @app.get("/")
-        async def root():
-            return {"message": "Google Ads MCP Server", "status": "running"}
-        
-        # Unified MCP endpoint - single entry point for all tools
-        @app.post("/mcp/")
-        async def unified_mcp_endpoint(request_data: dict):
-            """
-            Unified MCP endpoint that can call any tool based on the request.
-            Expected request format:
-            {
-                "tool": "tool_name",
-                "arguments": {
-                    "param1": "value1",
-                    "param2": "value2"
-                }
-            }
-            """
-            try:
-                tool_name = request_data.get("tool")
-                arguments = request_data.get("arguments", {})
-                
-                if not tool_name:
-                    return {"success": False, "error": "Missing 'tool' field in request"}
-                
-                # Route to the appropriate tool function
-                if tool_name == "list_accounts":
-                    result = await list_accounts()
-                    
-                elif tool_name == "execute_gaql_query":
-                    customer_id = arguments.get("customer_id")
-                    query = arguments.get("query")
-                    if not customer_id or not query:
-                        return {"success": False, "error": "Missing customer_id or query"}
-                    result = await execute_gaql_query(customer_id, query)
-                    
-                elif tool_name == "get_campaign_performance":
-                    customer_id = arguments.get("customer_id")
-                    days = arguments.get("days", 30)
-                    if not customer_id:
-                        return {"success": False, "error": "Missing customer_id"}
-                    result = await get_campaign_performance(customer_id, days)
-                    
-                elif tool_name == "get_ad_performance":
-                    customer_id = arguments.get("customer_id")
-                    days = arguments.get("days", 30)
-                    if not customer_id:
-                        return {"success": False, "error": "Missing customer_id"}
-                    result = await get_ad_performance(customer_id, days)
-                    
-                elif tool_name == "get_ad_creatives":
-                    customer_id = arguments.get("customer_id")
-                    if not customer_id:
-                        return {"success": False, "error": "Missing customer_id"}
-                    result = await get_ad_creatives(customer_id)
-                    
-                elif tool_name == "run_gaql":
-                    customer_id = arguments.get("customer_id")
-                    query = arguments.get("query")
-                    format_type = arguments.get("format", "table")
-                    if not customer_id or not query:
-                        return {"success": False, "error": "Missing customer_id or query"}
-                    result = await run_gaql(customer_id, query, format_type)
-                    
-                elif tool_name == "get_account_currency":
-                    customer_id = arguments.get("customer_id")
-                    if not customer_id:
-                        return {"success": False, "error": "Missing customer_id"}
-                    result = await get_account_currency(customer_id)
-                    
-                elif tool_name == "get_image_assets":
-                    customer_id = arguments.get("customer_id")
-                    limit = arguments.get("limit", 50)
-                    if not customer_id:
-                        return {"success": False, "error": "Missing customer_id"}
-                    result = await get_image_assets(customer_id, limit)
-                    
-                elif tool_name == "download_image_asset":
-                    customer_id = arguments.get("customer_id")
-                    asset_id = arguments.get("asset_id")
-                    output_dir = arguments.get("output_dir", "./ad_images")
-                    if not customer_id or not asset_id:
-                        return {"success": False, "error": "Missing customer_id or asset_id"}
-                    result = await download_image_asset(customer_id, asset_id, output_dir)
-                    
-                elif tool_name == "get_asset_usage":
-                    customer_id = arguments.get("customer_id")
-                    asset_id = arguments.get("asset_id")
-                    asset_type = arguments.get("asset_type", "IMAGE")
-                    if not customer_id:
-                        return {"success": False, "error": "Missing customer_id"}
-                    result = await get_asset_usage(customer_id, asset_id, asset_type)
-                    
-                elif tool_name == "analyze_image_assets":
-                    customer_id = arguments.get("customer_id")
-                    days = arguments.get("days", 30)
-                    if not customer_id:
-                        return {"success": False, "error": "Missing customer_id"}
-                    result = await analyze_image_assets(customer_id, days)
-                    
-                elif tool_name == "list_resources":
-                    customer_id = arguments.get("customer_id")
-                    if not customer_id:
-                        return {"success": False, "error": "Missing customer_id"}
-                    result = await list_resources(customer_id)
-                    
-                else:
-                    return {"success": False, "error": f"Unknown tool: {tool_name}"}
-                
-                return {"success": True, "data": result}
-                
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-        
-        # Keep individual endpoints for backward compatibility
-        @app.post("/mcp/list_accounts")
-        async def api_list_accounts():
-            try:
-                result = await list_accounts()
-                return {"success": True, "data": result}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-        
-        @app.post("/mcp/get_campaign_performance")
-        async def api_get_campaign_performance(request_data: dict):
-            try:
-                customer_id = request_data.get("customer_id")
-                days = request_data.get("days", 30)
-                result = await get_campaign_performance(customer_id, days)
-                return {"success": True, "data": result}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-        
-        @app.post("/mcp/get_ad_performance")
-        async def api_get_ad_performance(request_data: dict):
-            try:
-                customer_id = request_data.get("customer_id")
-                days = request_data.get("days", 30)
-                result = await get_ad_performance(customer_id, days)
-                return {"success": True, "data": result}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-        
-        @app.post("/mcp/get_ad_creatives")
-        async def api_get_ad_creatives(request_data: dict):
-            try:
-                customer_id = request_data.get("customer_id")
-                result = await get_ad_creatives(customer_id)
-                return {"success": True, "data": result}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-        
-        @app.post("/mcp/run_gaql")
-        async def api_run_gaql(request_data: dict):
-            try:
-                customer_id = request_data.get("customer_id")
-                query = request_data.get("query")
-                format_type = request_data.get("format", "table")
-                result = await run_gaql(customer_id, query, format_type)
-                return {"success": True, "data": result}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-        
-        @app.post("/mcp/get_account_currency")
-        async def api_get_account_currency(request_data: dict):
-            try:
-                customer_id = request_data.get("customer_id")
-                result = await get_account_currency(customer_id)
-                return {"success": True, "data": result}
-            except Exception as e:
-                return {"success": False, "error": str(e)}
-        
-        # Start the server
-        uvicorn.run(app, host="0.0.0.0", port=int(port))
+    if port or http_mode:
+        # Running in deployment environment - use HTTP transport
+        host = os.environ.get("HOST", "0.0.0.0")
+        port_num = int(port) if port else 8000
+        print(f"Starting MCP server on HTTP transport at {host}:{port_num}")
+        mcp.run(transport="http", host=host, port=port_num)
     else:
-        # Running locally - start stdio transport (for Cursor)
+        # Running locally - use stdio transport (for Cursor/desktop clients)
         print("Starting MCP server on stdio transport")
         mcp.run(transport="stdio")
