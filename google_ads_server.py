@@ -63,8 +63,14 @@ async def list_accounts() -> str:
     Returns:
         A formatted list of all Google Ads accounts accessible with your credentials
     """
-    # Use hardcoded parameters to run GAQL query via run_gaql function
-    customer_id = "4527553378"
+    # Get customer ID from environment variable and strip dashes
+    login_customer_id = os.getenv('GOOGLE_ADS_LOGIN_CUSTOMER_ID', '')
+    if not login_customer_id:
+        return "Error: GOOGLE_ADS_LOGIN_CUSTOMER_ID environment variable not set"
+    
+    # Strip dashes from customer ID for GAQL query
+    customer_id = login_customer_id.replace('-', '')
+    
     query = "SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager, customer_client.test_account, customer_client.status, customer_client.currency_code, customer_client.time_zone FROM customer_client ORDER BY customer_client.manager DESC, customer_client.descriptive_name"
     format = "table"
     
