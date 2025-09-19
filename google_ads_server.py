@@ -4,10 +4,10 @@ import requests
 import logging
 import json
 from pathlib import Path
-
+from fastapi.responses import JSONResponse
+import os
 # FastMCP
-from fastmcp import FastMCP
-from starlette.responses import JSONResponse
+from mcp.server.fastmcp import FastMCP
 
 # Authentication module
 from auth import get_credentials, get_headers, format_customer_id, API_VERSION
@@ -15,16 +15,33 @@ from auth import get_credentials, get_headers, format_customer_id, API_VERSION
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('google_ads_server')
+# Check if we're running in deployment environment at module level
+port = os.environ.get("PORT")
+http_mode = os.environ.get("MCP_HTTP_MODE", "").lower() in ("true", "1", "yes")
 
-mcp = FastMCP(
-    "google-ads-server",
-    dependencies=[
-        "google-auth-oauthlib",
-        "google-auth",
-        "requests",
-        "python-dotenv"
-    ]
-)
+if port or http_mode:
+    port_num = int(port) if port else 8080
+    mcp = FastMCP(
+        "google-ads-server",
+        host="0.0.0.0",
+        port=port_num,
+        dependencies=[
+            "google-auth-oauthlib",
+            "google-auth",
+            "requests", 
+            "python-dotenv"
+        ]
+    )
+else:
+    mcp = FastMCP(
+        "google-ads-server",
+        dependencies=[
+            "google-auth-oauthlib", 
+            "google-auth",
+            "requests",
+            "python-dotenv"
+        ]
+    )
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
@@ -1266,11 +1283,11 @@ if __name__ == "__main__":
     http_mode = os.environ.get("MCP_HTTP_MODE", "").lower() in ("true", "1", "yes")
     
     if port or http_mode:
-        # Running in deployment environment - use direct HTTP transport
+        # Running in deployment environment - use HTTP transport
         host = os.environ.get("HOST", "0.0.0.0")
         port_num = int(port) if port else 8000
         print(f"Starting FastMCP server on HTTP transport at {host}:{port_num}")
-        mcp.run(transport="http", host=host, port=port_num)
+        mcp.run(transport="streamable-http")
     else:
         # Running locally - use stdio transport (for Cursor/desktop clients)
         print("Starting MCP server on stdio transport")

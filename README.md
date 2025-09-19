@@ -100,21 +100,6 @@ This MCP server provides tools accessible through multiple interfaces:
 - **🌐 HTTP API** (for LangGraph agents) via Cloud Run endpoints
 - **💻 Command Line** via local stdio
 
-| **Tool Name**                   | **HTTP Endpoint**                    | **What It Does**                                            | **Parameters**                                 |
-|---------------------------------|--------------------------------------|-------------------------------------------------------------|-----------------------------------------------|
-| `list_accounts`                 | `POST /mcp/list_accounts`            | Shows all your Google Ads accounts                          | None required                                 |
-| `execute_gaql_query`            | `POST /mcp/execute_gaql_query`       | Runs a Google Ads Query Language query                      | `customer_id`, `query`                       |
-| `get_campaign_performance`      | `POST /mcp/get_campaign_performance` | Shows campaign metrics with performance data                | `customer_id`, `days` (optional)             |
-| `get_ad_performance`            | `POST /mcp/get_ad_performance`       | Detailed analysis of your ad creative performance           | `customer_id`, `days` (optional)             |
-| `get_ad_creatives`              | `POST /mcp/get_ad_creatives`         | Retrieves ad copy, headlines, and descriptions              | `customer_id`                                |
-| `run_gaql`                      | `POST /mcp/run_gaql`                 | Runs any arbitrary GAQL query with formatting options       | `customer_id`, `query`, `format` (optional)  |
-| `get_account_currency`          | `POST /mcp/get_account_currency`     | Gets the account's default currency                         | `customer_id`                                |
-| `get_image_assets`              | `POST /mcp/get_image_assets`         | Lists all image assets with download URLs                   | `customer_id`, `limit` (optional)            |
-| `download_image_asset`          | `POST /mcp/download_image_asset`     | Downloads a specific image asset                            | `customer_id`, `asset_id`, `output_dir`      |
-| `get_asset_usage`               | `POST /mcp/get_asset_usage`          | Shows where assets are used in campaigns                    | `customer_id`, `asset_id`, `asset_type`      |
-| `analyze_image_assets`          | `POST /mcp/analyze_image_assets`     | Analyzes image asset performance with metrics               | `customer_id`, `days` (optional)             |
-| `list_resources`                | `POST /mcp/list_resources`           | Lists valid GAQL resource types                             | `customer_id`                                |
-
 ### Health & Status Endpoints
 - `GET /health` - Health check endpoint (returns service status and version)
 - `GET /` - Service information
@@ -175,14 +160,7 @@ This custom version includes several enterprise enhancements:
 - **Domain-Wide Delegation**: Impersonates `[USER_EMAIL]`
 - **API Access**: Production Google Ads API with developer token `[DEVELOPER_TOKEN]`
 
-### HTTP API Integration
-Perfect for internal tools and LangGraph agents:
 
-```bash
-# Example HTTP API call
-curl -X POST "https://[CLOUD_RUN_URL]/mcp/list_accounts" \
-  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-  -H "Content-Type: application/json"
 ```
 
 ### Deployment Files
