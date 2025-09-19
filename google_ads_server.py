@@ -63,33 +63,12 @@ async def list_accounts() -> str:
     Returns:
         A formatted list of all Google Ads accounts accessible with your credentials
     """
-    try:
-        creds = get_credentials()
-        headers = get_headers(creds)
-        
-        url = f"https://googleads.googleapis.com/{API_VERSION}/customers:listAccessibleCustomers"
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code != 200:
-            return f"Error accessing accounts: {response.text}"
-        
-        customers = response.json()
-        if not customers.get('resourceNames'):
-            return "No accessible accounts found."
-        
-        # Format the results
-        result_lines = ["Accessible Google Ads Accounts:"]
-        result_lines.append("-" * 50)
-        
-        for resource_name in customers['resourceNames']:
-            customer_id = resource_name.split('/')[-1]
-            formatted_id = format_customer_id(customer_id)
-            result_lines.append(f"Account ID: {formatted_id}")
-        
-        return "\n".join(result_lines)
+    # Use hardcoded parameters to run GAQL query via run_gaql function
+    customer_id = "4527553378"
+    query = "SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager, customer_client.test_account, customer_client.status, customer_client.currency_code, customer_client.time_zone FROM customer_client ORDER BY customer_client.manager DESC, customer_client.descriptive_name"
+    format = "table"
     
-    except Exception as e:
-        return f"Error listing accounts: {str(e)}"
+    return await run_gaql(customer_id, query, format)
 
 @mcp.tool()
 async def execute_gaql_query(
