@@ -196,13 +196,14 @@ def get_oauth_credentials():
 
 
 def get_headers(creds):
-    """Get headers for Google Ads API requests."""
+    """Get headers for Google Ads API requests with proper session isolation."""
     if not GOOGLE_ADS_DEVELOPER_TOKEN:
         raise ValueError("GOOGLE_ADS_DEVELOPER_TOKEN environment variable not set")
     
     # Handle different credential types
     if isinstance(creds, service_account.Credentials):
         # For service account, we need to get a new bearer token
+        # Create a fresh request to ensure clean state
         auth_req = Request()
         creds.refresh(auth_req)
         token = creds.token
@@ -212,7 +213,9 @@ def get_headers(creds):
             if creds.expired and creds.refresh_token:
                 try:
                     logger.info("Refreshing expired OAuth token in get_headers")
-                    creds.refresh(Request())
+                    # Create a fresh request to ensure clean state
+                    auth_req = Request()
+                    creds.refresh(auth_req)
                     logger.info("Token successfully refreshed in get_headers")
                 except RefreshError as e:
                     logger.error(f"Error refreshing token in get_headers: {str(e)}")
@@ -228,10 +231,22 @@ def get_headers(creds):
     headers = {
         'Authorization': f'Bearer {token}',
         'developer-token': GOOGLE_ADS_DEVELOPER_TOKEN,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'User-Agent': 'GoogleAdsMCP/1.0'
     }
     
     if GOOGLE_ADS_LOGIN_CUSTOMER_ID:
         headers['login-customer-id'] = format_customer_id(GOOGLE_ADS_LOGIN_CUSTOMER_ID)
     
     return headers
+
+
+def reset_credentials():
+    """
+    Reset credentials to ensure a fresh authentication state.
+    
+    This function can be called when encountering session-related errors
+    to force a complete re-authentication.
+    """
+    logger.info("Resetting credentials to ensure fresh authentication state")
+    return get_credentials()

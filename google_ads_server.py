@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from fastapi.responses import JSONResponse
 import os
+import threading
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 # FastMCP
 from mcp.server.fastmcp import FastMCP
 
@@ -15,6 +18,144 @@ from auth import get_credentials, get_headers, format_customer_id, API_VERSION
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('google_ads_server')
+
+class GoogleAdsAPIClient:
+    """
+    Thread-safe Google Ads API client with proper session management.
+    
+    This class ensures that each API request uses a completely fresh session to prevent
+    nesting counter errors and other state-related issues.
+    """
+    
+    def __init__(self):
+        self._local = threading.local()
+        self._request_counter = 0
+        self._lock = threading.Lock()
+    
+    def _get_fresh_session(self):
+        """Create a completely fresh session for each request."""
+        session = requests.Session()
+        
+        # Configure retry strategy
+        retry_strategy = Retry(
+            total=2,  # Reduced retries to prevent state accumulation
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["POST"]
+        )
+        
+        # Mount adapter with retry strategy
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Set default headers
+        session.headers.update({
+            'User-Agent': f'GoogleAdsMCP/1.0-{self._request_counter}',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Connection': 'close'  # Force connection close
+        })
+        
+        return session
+    
+    def make_request(self, url: str, headers: dict, payload: dict) -> requests.Response:
+        """
+        Make a Google Ads API request with complete session isolation.
+        
+        Args:
+            url: The API endpoint URL
+            headers: Request headers including authorization
+            payload: Request payload
+            
+        Returns:
+            Response object from the API
+        """
+        with self._lock:
+            self._request_counter += 1
+        
+        # Create a completely fresh session for each request
+        fresh_session = self._get_fresh_session()
+        
+        try:
+            # Add unique request ID to headers to prevent caching
+            unique_headers = headers.copy()
+            unique_headers['X-Request-ID'] = f"req_{self._request_counter}_{threading.get_ident()}"
+            unique_headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            unique_headers['Pragma'] = 'no-cache'
+            unique_headers['Expires'] = '0'
+            
+            # Make the request with the fresh session
+            response = fresh_session.post(url, headers=unique_headers, json=payload, timeout=30)
+            
+            # Check for nesting counter errors
+            if response.status_code == 400:
+                response_text = response.text.lower()
+                if 'nesting counter' in response_text:
+                    logger.error(f"Nesting counter error detected: {response.text}")
+                    logger.info("Attempting to use subprocess-based API client for complete isolation")
+                    
+                    # Try using the subprocess-based client for complete isolation
+                    try:
+                        fallback_client = get_fallback_api_client()
+                        response = fallback_client.make_request(url, headers, payload)
+                        if response and response.status_code == 200:
+                            logger.info("Subprocess-based API client succeeded")
+                        else:
+                            logger.error("Subprocess-based API client also failed")
+                    except Exception as e:
+                        logger.error(f"Subprocess-based API client failed: {str(e)}")
+                        
+                        # Fallback to fresh session retry
+                        fresh_session.close()
+                        fresh_session = self._get_fresh_session()
+                        
+                        # Get completely fresh credentials
+                        from auth import reset_credentials, get_headers
+                        fresh_creds = reset_credentials()
+                        fresh_headers = get_headers(fresh_creds)
+                        fresh_headers['X-Request-ID'] = f"req_{self._request_counter}_retry_{threading.get_ident()}"
+                        fresh_headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                        fresh_headers['Pragma'] = 'no-cache'
+                        fresh_headers['Expires'] = '0'
+                        
+                        # Retry the request with completely fresh everything
+                        response = fresh_session.post(url, headers=fresh_headers, json=payload, timeout=30)
+                        logger.info("Retry with fresh session and credentials completed")
+            
+            return response
+        finally:
+            # Force close the session and clear all connections
+            try:
+                fresh_session.close()
+            except:
+                pass
+            
+            # Force garbage collection to clear any remaining state
+            import gc
+            gc.collect()
+
+# Configuration for API client type
+USE_SUBPROCESS_CLIENT = os.environ.get("GOOGLE_ADS_USE_SUBPROCESS", "true").lower() in ("true", "1", "yes")
+
+# Global API client instance - create fresh instance for each request
+def get_api_client():
+    """Get a fresh API client instance to prevent state accumulation."""
+    if USE_SUBPROCESS_CLIENT:
+        return get_fallback_api_client()
+    return GoogleAdsAPIClient()
+
+def get_fallback_api_client():
+    """Get a subprocess-based API client for complete isolation."""
+    try:
+        from subprocess_api_client import SubprocessGoogleAdsAPIClient
+        return SubprocessGoogleAdsAPIClient()
+    except ImportError:
+        logger.warning("Subprocess API client not available, using regular client")
+        return GoogleAdsAPIClient()
+
+# For backward compatibility, create a default instance
+api_client = get_api_client()
 # Check if we're running in deployment environment at module level
 port = os.environ.get("PORT")
 http_mode = os.environ.get("MCP_HTTP_MODE", "").lower() in ("true", "1", "yes")
@@ -105,9 +246,13 @@ async def execute_gaql_query(
         url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
         
         payload = {"query": query}
-        response = requests.post(url, headers=headers, json=payload)
+        
+        # Use a fresh API client for each request to prevent state accumulation
+        fresh_api_client = get_api_client()
+        response = fresh_api_client.make_request(url, headers, payload)
         
         if response.status_code != 200:
+            logger.error(f"Google Ads API error: {response.status_code} - {response.text}")
             return f"Error executing query: {response.text}"
         
         results = response.json()
@@ -147,6 +292,7 @@ async def execute_gaql_query(
         return "\n".join(result_lines)
     
     except Exception as e:
+        logger.error(f"Error executing GAQL query: {str(e)}")
         return f"Error executing GAQL query: {str(e)}"
 
 @mcp.tool()
@@ -310,9 +456,13 @@ async def run_gaql(
         url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
         
         payload = {"query": query}
-        response = requests.post(url, headers=headers, json=payload)
+        
+        # Use a fresh API client for each request to prevent state accumulation
+        fresh_api_client = get_api_client()
+        response = fresh_api_client.make_request(url, headers, payload)
         
         if response.status_code != 200:
+            logger.error(f"Google Ads API error: {response.status_code} - {response.text}")
             return f"Error executing query: {response.text}"
         
         results = response.json()
@@ -447,9 +597,13 @@ async def get_ad_creatives(
         url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
         
         payload = {"query": query}
-        response = requests.post(url, headers=headers, json=payload)
+        
+        # Use a fresh API client for each request to prevent state accumulation
+        fresh_api_client = get_api_client()
+        response = fresh_api_client.make_request(url, headers, payload)
         
         if response.status_code != 200:
+            logger.error(f"Google Ads API error: {response.status_code} - {response.text}")
             return f"Error retrieving ad creatives: {response.text}"
         
         results = response.json()
@@ -536,9 +690,13 @@ async def get_account_currency(
         url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
         
         payload = {"query": query}
-        response = requests.post(url, headers=headers, json=payload)
+        
+        # Use a fresh API client for each request to prevent state accumulation
+        fresh_api_client = get_api_client()
+        response = fresh_api_client.make_request(url, headers, payload)
         
         if response.status_code != 200:
+            logger.error(f"Google Ads API error: {response.status_code} - {response.text}")
             return f"Error retrieving account currency: {response.text}"
         
         results = response.json()
@@ -757,9 +915,13 @@ async def get_image_assets(
         url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
         
         payload = {"query": query}
-        response = requests.post(url, headers=headers, json=payload)
+        
+        # Use a fresh API client for each request to prevent state accumulation
+        fresh_api_client = get_api_client()
+        response = fresh_api_client.make_request(url, headers, payload)
         
         if response.status_code != 200:
+            logger.error(f"Google Ads API error: {response.status_code} - {response.text}")
             return f"Error retrieving image assets: {response.text}"
         
         results = response.json()
@@ -846,9 +1008,13 @@ async def download_image_asset(
         url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
         
         payload = {"query": query}
-        response = requests.post(url, headers=headers, json=payload)
+        
+        # Use a fresh API client for each request to prevent state accumulation
+        fresh_api_client = get_api_client()
+        response = fresh_api_client.make_request(url, headers, payload)
         
         if response.status_code != 200:
+            logger.error(f"Google Ads API error: {response.status_code} - {response.text}")
             return f"Error retrieving image asset: {response.text}"
         
         results = response.json()
@@ -992,9 +1158,13 @@ async def get_asset_usage(
         # First get the assets
         url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
         payload = {"query": assets_query}
-        assets_response = requests.post(url, headers=headers, json=payload)
+        
+        # Use a fresh API client for each request to prevent state accumulation
+        fresh_api_client = get_api_client()
+        assets_response = fresh_api_client.make_request(url, headers, payload)
         
         if assets_response.status_code != 200:
+            logger.error(f"Google Ads API error: {assets_response.status_code} - {assets_response.text}")
             return f"Error retrieving assets: {assets_response.text}"
         
         assets_results = assets_response.json()
@@ -1003,9 +1173,13 @@ async def get_asset_usage(
         
         # Now get the associations
         payload = {"query": associations_query}
-        assoc_response = requests.post(url, headers=headers, json=payload)
+        
+        # Use a fresh API client for each request to prevent state accumulation
+        fresh_api_client = get_api_client()
+        assoc_response = fresh_api_client.make_request(url, headers, payload)
         
         if assoc_response.status_code != 200:
+            logger.error(f"Google Ads API error: {assoc_response.status_code} - {assoc_response.text}")
             return f"Error retrieving asset associations: {assoc_response.text}"
         
         assoc_results = assoc_response.json()
@@ -1144,9 +1318,13 @@ async def analyze_image_assets(
         url = f"https://googleads.googleapis.com/{API_VERSION}/customers/{formatted_customer_id}/googleAds:search"
         
         payload = {"query": query}
-        response = requests.post(url, headers=headers, json=payload)
+        
+        # Use a fresh API client for each request to prevent state accumulation
+        fresh_api_client = get_api_client()
+        response = fresh_api_client.make_request(url, headers, payload)
         
         if response.status_code != 200:
+            logger.error(f"Google Ads API error: {response.status_code} - {response.text}")
             return f"Error analyzing image assets: {response.text}"
         
         results = response.json()
