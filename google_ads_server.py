@@ -93,35 +93,122 @@ class GoogleAdsAPIClient:
                 response_text = response.text.lower()
                 if 'nesting counter' in response_text:
                     logger.error(f"Nesting counter error detected: {response.text}")
-                    logger.info("Attempting to use subprocess-based API client for complete isolation")
+                    logger.info("Implementing nuclear option: complete process restart simulation")
                     
-                    # Try using the subprocess-based client for complete isolation
+                    # Nuclear option: simulate a complete restart by creating a new process
                     try:
-                        fallback_client = get_fallback_api_client()
-                        response = fallback_client.make_request(url, headers, payload)
-                        if response and response.status_code == 200:
-                            logger.info("Subprocess-based API client succeeded")
-                        else:
-                            logger.error("Subprocess-based API client also failed")
+                        import subprocess
+                        import tempfile
+                        import json
+                        
+                        # Create a temporary script that makes the API call
+                        script_content = f'''
+import sys
+import os
+import requests
+import json
+from pathlib import Path
+
+# Add the current directory to the path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from auth import get_credentials, get_headers
+
+def make_fresh_api_call():
+    try:
+        creds = get_credentials()
+        headers = get_headers(creds)
+        
+        # Create a completely fresh session
+        session = requests.Session()
+        session.headers.update({{
+            'User-Agent': 'GoogleAdsMCP-FreshProcess/1.0',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Connection': 'close',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        }})
+        
+        # Make the request
+        response = session.post("{url}", headers=headers, json={json.dumps(payload)}, timeout=30)
+        
+        return {{
+            'status_code': response.status_code,
+            'text': response.text,
+            'headers': dict(response.headers)
+        }}
+        
+    except Exception as e:
+        return {{
+            'status_code': 500,
+            'text': f"Error in fresh process: {{str(e)}}",
+            'headers': {{}}
+        }}
+
+if __name__ == "__main__":
+    result = make_fresh_api_call()
+    print(json.dumps(result))
+'''
+                        
+                        # Write the script to a temporary file
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+                            f.write(script_content)
+                            script_path = f.name
+                        
+                        try:
+                            # Run the script in a completely separate process
+                            result = subprocess.run(
+                                [sys.executable, script_path],
+                                capture_output=True,
+                                text=True,
+                                timeout=60,
+                                cwd=str(Path(__file__).parent)
+                            )
+                            
+                            if result.returncode == 0:
+                                response_data = json.loads(result.stdout)
+                                
+                                # Create a mock response object
+                                class MockResponse:
+                                    def __init__(self, data):
+                                        self.status_code = data['status_code']
+                                        self.text = data['text']
+                                        self.headers = data['headers']
+                                    
+                                    def json(self):
+                                        try:
+                                            return json.loads(self.text)
+                                        except:
+                                            return {}
+                                
+                                response = MockResponse(response_data)
+                                logger.info("Fresh process API call completed")
+                            else:
+                                logger.error(f"Fresh process failed with return code {result.returncode}")
+                                logger.error(f"Stderr: {result.stderr}")
+                                
+                        finally:
+                            # Clean up the temporary script
+                            try:
+                                os.unlink(script_path)
+                            except:
+                                pass
+                                
                     except Exception as e:
-                        logger.error(f"Subprocess-based API client failed: {str(e)}")
+                        logger.error(f"Fresh process approach failed: {str(e)}")
                         
-                        # Fallback to fresh session retry
-                        fresh_session.close()
-                        fresh_session = self._get_fresh_session()
-                        
-                        # Get completely fresh credentials
-                        from auth import reset_credentials, get_headers
-                        fresh_creds = reset_credentials()
-                        fresh_headers = get_headers(fresh_creds)
-                        fresh_headers['X-Request-ID'] = f"req_{self._request_counter}_retry_{threading.get_ident()}"
-                        fresh_headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-                        fresh_headers['Pragma'] = 'no-cache'
-                        fresh_headers['Expires'] = '0'
-                        
-                        # Retry the request with completely fresh everything
-                        response = fresh_session.post(url, headers=fresh_headers, json=payload, timeout=30)
-                        logger.info("Retry with fresh session and credentials completed")
+                        # Final fallback: try subprocess client
+                        try:
+                            fallback_client = get_fallback_api_client()
+                            response = fallback_client.make_request(url, headers, payload)
+                            if response and response.status_code == 200:
+                                logger.info("Subprocess-based API client succeeded")
+                            else:
+                                logger.error("Subprocess-based API client also failed")
+                        except Exception as e2:
+                            logger.error(f"Subprocess-based API client failed: {str(e2)}")
             
             return response
         finally:
@@ -136,14 +223,26 @@ class GoogleAdsAPIClient:
             gc.collect()
 
 # Configuration for API client type
+USE_OFFICIAL_CLIENT = os.environ.get("GOOGLE_ADS_USE_OFFICIAL", "false").lower() in ("true", "1", "yes")
 USE_SUBPROCESS_CLIENT = os.environ.get("GOOGLE_ADS_USE_SUBPROCESS", "true").lower() in ("true", "1", "yes")
 
 # Global API client instance - create fresh instance for each request
 def get_api_client():
     """Get a fresh API client instance to prevent state accumulation."""
-    if USE_SUBPROCESS_CLIENT:
+    if USE_OFFICIAL_CLIENT:
+        return get_official_api_client()
+    elif USE_SUBPROCESS_CLIENT:
         return get_fallback_api_client()
     return GoogleAdsAPIClient()
+
+def get_official_api_client():
+    """Get the official Google Ads API client for complete reliability."""
+    try:
+        from official_client_wrapper import create_official_google_ads_client
+        return create_official_google_ads_client()
+    except ImportError:
+        logger.warning("Official Google Ads API client not available, using subprocess client")
+        return get_fallback_api_client()
 
 def get_fallback_api_client():
     """Get a subprocess-based API client for complete isolation."""
