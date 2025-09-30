@@ -54,6 +54,18 @@ def format_customer_id(customer_id: str) -> str:
     return customer_id.zfill(10)
 
 
+def validate_token(token: str) -> bool:
+    """Validate that a token is not empty and looks valid."""
+    if not token:
+        logger.error("Token validation failed: token is empty")
+        return False
+    if len(token) < 10:
+        logger.error(f"Token validation failed: token too short ({len(token)} chars)")
+        return False
+    logger.info(f"Token validation passed: {len(token)} chars")
+    return True
+
+
 def get_credentials():
     """
     Get and refresh OAuth credentials or service account credentials based on the auth type.
@@ -84,13 +96,28 @@ def get_credentials():
 
 
 def get_service_account_credentials():
-    """Get credentials using a service account key file."""
+    """Get credentials using a service account key file with enhanced error handling."""
     logger.info(f"Loading service account credentials from {GOOGLE_ADS_CREDENTIALS_PATH}")
     
     if not os.path.exists(GOOGLE_ADS_CREDENTIALS_PATH):
         raise FileNotFoundError(f"Service account key file not found at {GOOGLE_ADS_CREDENTIALS_PATH}")
     
     try:
+        # Read and validate the JSON file first
+        with open(GOOGLE_ADS_CREDENTIALS_PATH, 'r') as f:
+            key_data = json.load(f)
+        
+        # Validate required fields
+        required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email', 'client_id']
+        missing_fields = [field for field in required_fields if field not in key_data]
+        if missing_fields:
+            raise ValueError(f"Service account key file missing required fields: {missing_fields}")
+        
+        if key_data.get('type') != 'service_account':
+            raise ValueError(f"Invalid service account key type: {key_data.get('type')}")
+        
+        logger.info(f"Service account key file validated: {key_data.get('client_email')}")
+        
         credentials = service_account.Credentials.from_service_account_file(
             GOOGLE_ADS_CREDENTIALS_PATH, 
             scopes=SCOPES
@@ -101,9 +128,23 @@ def get_service_account_credentials():
         if impersonation_email:
             logger.info(f"Impersonating user: {impersonation_email}")
             credentials = credentials.with_subject(impersonation_email)
+        
+        # Test the credentials by trying to refresh them
+        try:
+            auth_req = Request()
+            credentials.refresh(auth_req)
+            if not credentials.token:
+                raise ValueError("Service account credentials refresh returned empty token")
+            logger.info("Service account credentials validated successfully")
+        except Exception as e:
+            logger.error(f"Service account credentials validation failed: {str(e)}")
+            raise ValueError(f"Service account credentials are invalid: {str(e)}")
             
         return credentials
         
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in service account key file: {str(e)}")
+        raise ValueError(f"Service account key file contains invalid JSON: {str(e)}")
     except Exception as e:
         logger.error(f"Error loading service account credentials: {str(e)}")
         raise
@@ -203,12 +244,39 @@ def get_headers(creds):
     # Handle different credential types
     if isinstance(creds, service_account.Credentials):
         # For service account, we need to get a new bearer token
-        # Create a fresh request to ensure clean state
-        auth_req = Request()
-        creds.refresh(auth_req)
-        token = creds.token
+        try:
+            logger.info("Refreshing service account token...")
+            # Create a fresh request to ensure clean state
+            auth_req = Request()
+            creds.refresh(auth_req)
+            token = creds.token
+            
+            # Validate the token
+            if not validate_token(token):
+                raise ValueError("Service account token validation failed")
+            
+            logger.info(f"Service account token refreshed successfully (length: {len(token)})")
+            
+        except Exception as e:
+            logger.error(f"Error refreshing service account token: {str(e)}")
+            # Try to get completely fresh credentials
+            try:
+                logger.info("Attempting to get fresh service account credentials...")
+                fresh_creds = get_service_account_credentials()
+                auth_req = Request()
+                fresh_creds.refresh(auth_req)
+                token = fresh_creds.token
+                
+                if not validate_token(token):
+                    raise ValueError("Fresh service account token validation failed")
+                
+                logger.info(f"Fresh service account credentials obtained successfully (token length: {len(token)})")
+                
+            except Exception as e2:
+                logger.error(f"Failed to get fresh service account credentials: {str(e2)}")
+                raise ValueError(f"Service account authentication failed: {str(e2)}")
     else:
-        # For OAuth credentials, check if token needs refresh
+        # OAuth credentials, check if token needs refresh
         if not creds.valid:
             if creds.expired and creds.refresh_token:
                 try:
@@ -228,6 +296,10 @@ def get_headers(creds):
         
         token = creds.token
         
+        # Validate OAuth token
+        if not validate_token(token):
+            raise ValueError("OAuth token validation failed")
+    
     headers = {
         'Authorization': f'Bearer {token}',
         'developer-token': GOOGLE_ADS_DEVELOPER_TOKEN,
@@ -237,6 +309,9 @@ def get_headers(creds):
     
     if GOOGLE_ADS_LOGIN_CUSTOMER_ID:
         headers['login-customer-id'] = format_customer_id(GOOGLE_ADS_LOGIN_CUSTOMER_ID)
+    
+    # Log token info for debugging (first 20 chars only for security)
+    logger.info(f"Generated headers with token: {token[:20]}... (length: {len(token)})")
     
     return headers
 
