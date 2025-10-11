@@ -15,6 +15,9 @@ from mcp.server.fastmcp import FastMCP
 # Authentication module
 from auth import get_credentials, get_headers, format_customer_id, API_VERSION
 
+# MCP Auth middleware
+from authn import install_auth
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('google_ads_server')
@@ -100,6 +103,7 @@ class GoogleAdsAPIClient:
                         import subprocess
                         import tempfile
                         import json
+                        import sys
                         
                         # Create a temporary script that makes the API call
                         script_content = f'''
@@ -269,7 +273,8 @@ if port or http_mode:
             "google-auth-oauthlib",
             "google-auth",
             "requests", 
-            "python-dotenv"
+            "python-dotenv",
+            "PyJWT"
         ]
     )
 else:
@@ -279,13 +284,81 @@ else:
             "google-auth-oauthlib", 
             "google-auth",
             "requests",
-            "python-dotenv"
+            "python-dotenv",
+            "PyJWT"
         ]
     )
+
+# Authentication helper function
+def check_auth(request=None):
+    """Check authentication for MCP tools and routes."""
+    # For now, we'll skip authentication for MCP tools since they don't have direct access to request
+    # In a production environment, you might want to implement a different approach
+    # such as using request context or session management
+    return True
+
+# Note: FastMCP doesn't expose the underlying Starlette app directly
+# Authentication will be handled at the route level for custom routes
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
     """Health check endpoint for monitoring and load balancers."""
+    # Check if health endpoint should be protected
+    protect_health = os.environ.get("MCP_PROTECT_HEALTH", "false").lower() in ("true", "1", "yes")
+    
+    if protect_health:
+        # Check authentication for protected health endpoint
+        api_key = request.headers.get("X-API-Key")
+        auth_header = request.headers.get("Authorization", "")
+        
+        # Check API key
+        if api_key and api_key == os.environ.get("MCP_API_KEY"):
+            return JSONResponse({
+                "status": "healthy", 
+                "service": "google-ads-mcp-server",
+                "version": "1.0.0"
+            })
+        
+        # Check JWT
+        if auth_header.startswith("Bearer ") and os.environ.get("MCP_JWT_SECRET"):
+            try:
+                import jwt
+                token = auth_header.split(" ", 1)[1]
+                jwt_secret = os.environ.get("MCP_JWT_SECRET")
+                jwt_audience = os.environ.get("MCP_JWT_AUDIENCE")
+                jwt_issuer = os.environ.get("MCP_JWT_ISSUER")
+                jwt_leeway = int(os.environ.get("MCP_JWT_LEEWAY", "30"))
+                
+                decode_kwargs = {
+                    "token": token,
+                    "key": jwt_secret,
+                    "algorithms": ["HS256"],
+                    "leeway": jwt_leeway,
+                }
+                
+                if jwt_audience:
+                    decode_kwargs["audience"] = jwt_audience
+                if jwt_issuer:
+                    decode_kwargs["issuer"] = jwt_issuer
+                
+                jwt.decode(**decode_kwargs)
+                return JSONResponse({
+                    "status": "healthy", 
+                    "service": "google-ads-mcp-server",
+                    "version": "1.0.0"
+                })
+            except Exception:
+                return JSONResponse(
+                    {"error": "Unauthorized"}, 
+                    status_code=401
+                )
+        
+        return JSONResponse(
+            {"error": "Unauthorized. Provide X-API-Key or Authorization: Bearer <token>"}, 
+            status_code=401
+        )
+    
+    # Unprotected health endpoint (default)
     return JSONResponse({
         "status": "healthy", 
         "service": "google-ads-mcp-server",

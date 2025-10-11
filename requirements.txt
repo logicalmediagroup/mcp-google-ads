@@ -17,6 +17,9 @@ google-ads>=24.0.0
 # Environment configuration
 python-dotenv>=1.0.0
 
+# JWT authentication
+PyJWT>=2.8.0
+
 # Optional visualization dependencies
 matplotlib>=3.7.3
 pandas>=2.1.4
